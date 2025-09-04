@@ -3,12 +3,14 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 import logging
 import random
 import os
+import asyncio
 
 # Configurar logging para ver errores
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Datos de asignaturas actualizados con IDs consistentes
 SUBJECTS = {
@@ -131,7 +133,7 @@ class ClassBot:
 
     async def welcome_new_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """✅ Dar la bienvenida automática a nuevos miembros"""
-        print("🔔 Evento de nuevo miembro detectado!")
+        logger.info("🔔 Evento de nuevo miembro detectado!")
 
         # Verificar que hay nuevos miembros
         if not update.message or not update.message.new_chat_members:
@@ -140,10 +142,10 @@ class ClassBot:
         for new_member in update.message.new_chat_members:
             # ⚠️ Evitar saludar al propio bot u otros bots
             if new_member.is_bot:
-                print(f"⚠️  Ignorando bot: {new_member.first_name}")
+                logger.info(f"⚠️  Ignorando bot: {new_member.first_name}")
                 continue
 
-            print(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
+            logger.info(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
 
             # Seleccionar mensaje de bienvenida aleatorio
             welcome_message = random.choice(WELCOME_MESSAGES).format(
@@ -166,9 +168,9 @@ class ClassBot:
             try:
                 # Enviar mensaje de bienvenida al grupo
                 await update.message.reply_text(full_welcome)
-                print(f"✅ Bienvenida enviada a {new_member.first_name} en el grupo")
+                logger.info(f"✅ Bienvenida enviada a {new_member.first_name} en el grupo")
 
-                # Enviar mensaje privado al nuevo miembro
+                # Enviar mensaje privado al nuevo miembro (con manejo de errores)
                 try:
                     # Crear botón para iniciar conversación privada
                     keyboard = [
@@ -181,12 +183,13 @@ class ClassBot:
                         text=f"👋 ¡Hola {new_member.first_name}! Soy el asistente del Seminario. Haz clic en el botón para iniciar una conversación privada conmigo donde podré ayudarte con información sobre las asignaturas, bibliografías y más.",
                         reply_markup=reply_markup
                     )
-                    print(f"✅ Invitación a chat privado enviada a {new_member.first_name}")
+                    logger.info(f"✅ Invitación a chat privado enviada a {new_member.first_name}")
                 except Exception as e:
-                    print(f"⚠️ No se pudo enviar mensaje privado a {new_member.first_name}: {e}")
+                    logger.warning(f"⚠️ No se pudo enviar mensaje privado a {new_member.first_name}: {e}")
+                    # Esto es normal si el usuario tiene restringidos los mensajes de bots
 
             except Exception as e:
-                print(f"❌ Error enviando bienvenida al grupo: {e}")
+                logger.error(f"❌ Error enviando bienvenida al grupo: {e}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mensaje de bienvenida"""
@@ -282,7 +285,7 @@ Puedo brindar información sobre:
             return
 
         # Conversación privada - mostrar la bibliografía completa
-        print("📖 Comando /bibliografia ejecutado")
+        logger.info("📖 Comando /bibliografia ejecutado")
         bibliografia_text = """
 📚 Bibliografía Recomendada:
 
@@ -309,8 +312,8 @@ https://t.me/semholguincentro/40
         # CORRECCIÓN: Unir todas las partes después de "subject_"
         subject_id = "_".join(query.data.split("_")[1:])
 
-        print(f"🔍 Botón presionado: {query.data}")
-        print(f"🔍 ID de asignatura extraído: {subject_id}")
+        logger.info(f"🔍 Botón presionado: {query.data}")
+        logger.info(f"🔍 ID de asignatura extraído: {subject_id}")
 
         if subject_id in SUBJECTS:
             subject = SUBJECTS[subject_id]
@@ -319,7 +322,7 @@ https://t.me/semholguincentro/40
 
 🔗 Recursos: {subject['resources']}
             """
-            print(f"✅ Asignatura encontrada: {subject['name']}")
+            logger.info(f"✅ Asignatura encontrada: {subject['name']}")
             await query.edit_message_text(
                 text=response_text,
                 reply_markup=InlineKeyboardMarkup([
@@ -327,8 +330,8 @@ https://t.me/semholguincentro/40
                 ])
             )
         else:
-            print(f"❌ Asignatura no encontrada: {subject_id}")
-            print(f"📋 Asignaturas disponibles: {list(SUBJECTS.keys())}")
+            logger.error(f"❌ Asignatura no encontrada: {subject_id}")
+            logger.info(f"📋 Asignaturas disponibles: {list(SUBJECTS.keys())}")
             await query.edit_message_text(
                 text="❌ Lo siento, no se pudo encontrar la información de esta asignatura.",
                 reply_markup=InlineKeyboardMarkup([
@@ -442,35 +445,53 @@ Funcionalidades:
         """
         await update.message.reply_text(rules_text)
 
-def main():
+async def main():
     """Función principal para Render"""
     # Obtener el token de la variable de entorno
     BOT_TOKEN = os.environ.get('BOT_TOKEN')
     
     if not BOT_TOKEN:
-        print("❌ Error: No se encontró BOT_TOKEN en las variables de entorno")
+        logger.error("❌ Error: No se encontró BOT_TOKEN en las variables de entorno")
         return
 
-    print("🤖 Iniciando bot en Render...")
-    print("🔄 Versión optimizada para Render")
-    print(f"📚 Total de asignaturas: {len(SUBJECTS)}")
-    print("📋 IDs de asignaturas disponibles:")
-    for subject_id in SUBJECTS.keys():
-        print(f"   - {subject_id}")
-
+    logger.info("🤖 Iniciando bot en Render...")
+    logger.info(f"📚 Total de asignaturas: {len(SUBJECTS)}")
+    
     # Crear el bot
     bot = ClassBot(BOT_TOKEN)
 
-    # Ejecutar (modo polling para Render)
+    # Ejecutar el bot
     try:
-        print("✅ Bot iniciado correctamente")
-        print("📖 Comando /bibliografia incluye: https://t.me/semholguincentro/40")
-        print("🔘 Ahora con botón de regreso al inicio en bibliografía")
-        print("💬 Nueva función: Conversación privada con usuarios del grupo")
-        bot.application.run_polling()
+        logger.info("✅ Bot iniciado correctamente")
+        logger.info("📖 Comando /bibliografia incluye: https://t.me/semholguincentro/40")
+        logger.info("🔘 Ahora con botón de regreso al inicio en bibliografía")
+        logger.info("💬 Nueva función: Conversación privada con usuarios del grupo")
+        
+        # Ejecutar el bot (esta es la forma correcta para Render)
+        await bot.application.initialize()
+        await bot.application.start()
+        await bot.application.updater.start_polling()
+        
+        # Mantener el bot corriendo
+        await asyncio.Event().wait()
+        
+    except asyncio.CancelledError:
+        logger.info("🛑 Bot detenido por señal de interrupción")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        logger.error(f"❌ Error: {e}")
+    finally:
+        # Limpiar recursos
+        if bot.application.updater:
+            await bot.application.updater.stop()
+        await bot.application.stop()
+        await bot.application.shutdown()
 
 # 🚀 EJECUCIÓN PARA RENDER
 if __name__ == "__main__":
-    main()
+    # Configurar el event loop correctamente para Render
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🤖 Bot detenido por el usuario")
+    except Exception as e:
+        logger.error(f"❌ Error fatal: {e}")
