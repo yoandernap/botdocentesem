@@ -2,31 +2,13 @@ from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMar
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 import logging
 import random
-import asyncio
 import os
-from datetime import datetime
-from flask import Flask
-import threading
-import signal
-import sys
 
 # Configurar logging para ver errores
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
-
-# Crear app Flask para health checks
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Bot de Telegram funcionando correctamente ✅", 200
-
-@app.route('/health')
-def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
 # Datos de asignaturas actualizados con IDs consistentes
 SUBJECTS = {
@@ -149,21 +131,26 @@ class ClassBot:
 
     async def welcome_new_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """✅ Dar la bienvenida automática a nuevos miembros"""
-        logger.info("🔔 Evento de nuevo miembro detectado!")
+        print("🔔 Evento de nuevo miembro detectado!")
 
+        # Verificar que hay nuevos miembros
         if not update.message or not update.message.new_chat_members:
             return
 
         for new_member in update.message.new_chat_members:
+            # ⚠️ Evitar saludar al propio bot u otros bots
             if new_member.is_bot:
+                print(f"⚠️  Ignorando bot: {new_member.first_name}")
                 continue
 
-            logger.info(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
+            print(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
 
+            # Seleccionar mensaje de bienvenida aleatorio
             welcome_message = random.choice(WELCOME_MESSAGES).format(
                 name=new_member.first_name
             )
 
+            # Mensaje de bienvenida completo
             full_welcome = f"""
 {welcome_message}
 
@@ -177,34 +164,55 @@ class ClassBot:
             """
 
             try:
+                # Enviar mensaje de bienvenida al grupo
                 await update.message.reply_text(full_welcome)
-                logger.info(f"✅ Bienvenida enviada a {new_member.first_name}")
-                
+                print(f"✅ Bienvenida enviada a {new_member.first_name} en el grupo")
+
+                # Enviar mensaje privado al nuevo miembro
+                try:
+                    # Crear botón para iniciar conversación privada
+                    keyboard = [
+                        [InlineKeyboardButton("🚀 Iniciar conversación privada", url=f"https://t.me/{context.bot.username}?start=start")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.send_message(
+                        chat_id=new_member.id,
+                        text=f"👋 ¡Hola {new_member.first_name}! Soy el asistente del Seminario. Haz clic en el botón para iniciar una conversación privada conmigo donde podré ayudarte con información sobre las asignaturas, bibliografías y más.",
+                        reply_markup=reply_markup
+                    )
+                    print(f"✅ Invitación a chat privado enviada a {new_member.first_name}")
+                except Exception as e:
+                    print(f"⚠️ No se pudo enviar mensaje privado a {new_member.first_name}: {e}")
+
             except Exception as e:
-                logger.error(f"❌ Error enviando bienvenida: {e}")
+                print(f"❌ Error enviando bienvenida al grupo: {e}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mensaje de bienvenida"""
         user = update.effective_user
         chat_type = update.effective_chat.type
-        
+
+        # Si el comando se ejecuta en un grupo (no en privado)
         if chat_type in ["group", "supergroup"]:
+            # Crear botón para iniciar conversación privada
             keyboard = [
                 [InlineKeyboardButton("🚀 Iniciar conversación privada", url=f"https://t.me/{context.bot.username}?start=start")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             welcome_text = f"""
-👋 ¡Hola {user.first_name}! 
+👋 ¡Hola {user.first_name}!
 
 Soy el Asistente Docente del Seminario Evangélico Metodista Extensión Holguín.
 
-Para una mejor experiencia, te invito a iniciar una conversación privada conmigo.
+Para una mejor experiencia, te invito a iniciar una conversación privada conmigo haciendo clic en el botón de abajo.
 
 ¡Allí podré ayudarte con toda la información que necesites! 📚
             """
             await update.message.reply_text(welcome_text, reply_markup=reply_markup)
         else:
+            # Conversación privada
             welcome_text = f"""
 👋 ¡Hola {user.first_name}! Bienvenido al Asistente Docente del Seminario Evangélico Metodista Extensión Holguín!
 
@@ -219,70 +227,90 @@ Puedo brindar información sobre:
 ¡Espero que te sea útil!
             """
             await update.message.reply_text(welcome_text)
-        
+
+        # Configurar comandos después del start
         await self.set_bot_commands()
 
     async def list_subjects(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mostrar lista de asignaturas con botones interactivos"""
+        # Si el comando se ejecuta en un grupo, sugerir conversación privada
         if update.effective_chat.type in ["group", "supergroup"]:
             keyboard = [
                 [InlineKeyboardButton("🚀 Ver asignaturas en privado", url=f"https://t.me/{context.bot.username}?start=asignaturas")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await update.message.reply_text(
                 "📚 Para consultar la lista completa de asignaturas, te invito a continuar la conversación en privado:",
                 reply_markup=reply_markup
             )
             return
-            
+
+        # Conversación privada - mostrar la lista completa
         keyboard = []
         for subject_id, subject_info in SUBJECTS.items():
             keyboard.append([InlineKeyboardButton(
                 subject_info["name"],
                 callback_data=f"subject_{subject_id}"
             )])
-        
-        keyboard.append([InlineKeyboardButton("◀️ Volver al inicio", callback_data="back_to_start")])
+
+        # Agregar botón "Volver al inicio" al final
+        keyboard.append([InlineKeyboardButton(
+            "◀️ Volver al inicio",
+            callback_data="back_to_start"
+        )])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
             "📚 Lista de Asignaturas:\n\nSelecciona una asignatura para ver más detalles:",
             reply_markup=reply_markup
         )
 
     async def list_bibliografia(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mostrar información de bibliografía"""
+        """Mostrar información de bibliografía con enlace directo y botón de regreso"""
+        # Si el comando se ejecuta en un grupo, sugerir conversación privada
         if update.effective_chat.type in ["group", "supergroup"]:
             keyboard = [
                 [InlineKeyboardButton("🚀 Ver bibliografía en privado", url=f"https://t.me/{context.bot.username}?start=bibliografia")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await update.message.reply_text(
                 "📖 Para consultar la bibliografía completa, te invito a continuar la conversación en privado:",
                 reply_markup=reply_markup
             )
             return
-            
+
+        # Conversación privada - mostrar la bibliografía completa
+        print("📖 Comando /bibliografia ejecutado")
         bibliografia_text = """
 📚 Bibliografía Recomendada:
 
 🔗 Accede a toda la literatura aquí:
 https://t.me/semholguincentro/40
         """
-        
-        keyboard = [[InlineKeyboardButton("◀️ Volver al inicio", callback_data="back_to_start")]]
+
+        # Crear teclado con botón de regreso al inicio
+        keyboard = [
+            [InlineKeyboardButton("◀️ Volver al inicio", callback_data="back_to_start")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(bibliografia_text, reply_markup=reply_markup)
+
+        await update.message.reply_text(
+            bibliografia_text,
+            reply_markup=reply_markup
+        )
 
     async def subject_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Manejar la selección de una asignatura"""
         query = update.callback_query
         await query.answer()
 
+        # CORRECCIÓN: Unir todas las partes después de "subject_"
         subject_id = "_".join(query.data.split("_")[1:])
+
+        print(f"🔍 Botón presionado: {query.data}")
+        print(f"🔍 ID de asignatura extraído: {subject_id}")
 
         if subject_id in SUBJECTS:
             subject = SUBJECTS[subject_id]
@@ -291,6 +319,7 @@ https://t.me/semholguincentro/40
 
 🔗 Recursos: {subject['resources']}
             """
+            print(f"✅ Asignatura encontrada: {subject['name']}")
             await query.edit_message_text(
                 text=response_text,
                 reply_markup=InlineKeyboardMarkup([
@@ -298,6 +327,8 @@ https://t.me/semholguincentro/40
                 ])
             )
         else:
+            print(f"❌ Asignatura no encontrada: {subject_id}")
+            print(f"📋 Asignaturas disponibles: {list(SUBJECTS.keys())}")
             await query.edit_message_text(
                 text="❌ Lo siento, no se pudo encontrar la información de esta asignatura.",
                 reply_markup=InlineKeyboardMarkup([
@@ -306,11 +337,12 @@ https://t.me/semholguincentro/40
             )
 
     async def back_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Manejar botones de volver"""
+        """Manejar botones de volver (tanto a asignaturas como al inicio)"""
         query = update.callback_query
         await query.answer()
-        
+
         if query.data == "back_to_start":
+            # Volver al mensaje de inicio
             user = query.from_user
             welcome_text = f"""
 👋 ¡Hola {user.first_name}! Bienvenido al Asistente Docente del Seminario Evangélico Metodista Extensión Holguín!
@@ -326,18 +358,23 @@ Puedo brindar información sobre:
 ¡Espero que te sea útil!
             """
             await query.edit_message_text(welcome_text)
-            
-        else:
+
+        else:  # back_to_subjects
+            # Volver a la lista de asignaturas
             keyboard = []
             for subject_id, subject_info in SUBJECTS.items():
                 keyboard.append([InlineKeyboardButton(
                     subject_info["name"],
                     callback_data=f"subject_{subject_id}"
                 )])
-            
-            keyboard.append([InlineKeyboardButton("◀️ Volver al inicio", callback_data="back_to_start")])
+
+            # Agregar botón "Volver al inicio" al final
+            keyboard.append([InlineKeyboardButton(
+                "◀️ Volver al inicio",
+                callback_data="back_to_start"
+            )])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
             await query.edit_message_text(
                 "📚 **Lista de Asignaturas:**\n\nSelecciona una asignatura para ver más detalles:",
                 reply_markup=reply_markup
@@ -345,18 +382,20 @@ Puedo brindar información sobre:
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mostrar mensaje de ayuda"""
+        # Si el comando se ejecuta en un grupo, sugerir conversación privada
         if update.effective_chat.type in ["group", "supergroup"]:
             keyboard = [
                 [InlineKeyboardButton("🚀 Obtener ayuda en privado", url=f"https://t.me/{context.bot.username}?start=help")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await update.message.reply_text(
                 "❓ Para obtener ayuda completa, te invito a continuar la conversación en privado:",
                 reply_markup=reply_markup
             )
             return
-            
+
+        # Conversación privada - mostrar la ayuda completa
         help_text = """
 🤖 Bot de Gestión de Asignaturas
 
@@ -371,23 +410,25 @@ Funcionalidades:
 - Consultar información de asignaturas
 - Recibir bienvenida automática al unirte
 - Acceder a recursos de cada materia
-            """
+        """
         await update.message.reply_text(help_text)
 
     async def rules(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mostrar normas del grupo"""
+        # Si el comando se ejecuta en un grupo, sugerir conversación privada
         if update.effective_chat.type in ["group", "supergroup"]:
             keyboard = [
                 [InlineKeyboardButton("🚀 Ver normas en privado", url=f"https://t.me/{context.bot.username}?start=normas")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
+
             await update.message.reply_text(
                 "📋 Para consultar las normas completas, te invito a continuar la conversación en privado:",
                 reply_markup=reply_markup
             )
             return
-            
+
+        # Conversación privada - mostrar las normas completas
         rules_text = """
 📋 Normas del Grupo de Clase:
 
@@ -401,61 +442,35 @@ Funcionalidades:
         """
         await update.message.reply_text(rules_text)
 
-def run_flask():
-    """Ejecutar servidor Flask para health checks"""
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-async def main():
+def main():
     """Función principal para Render"""
+    # Obtener el token de la variable de entorno
     BOT_TOKEN = os.environ.get('BOT_TOKEN')
+    
     if not BOT_TOKEN:
-        logger.error("❌ Error: BOT_TOKEN no encontrado en variables de entorno")
-        sys.exit(1)
+        print("❌ Error: No se encontró BOT_TOKEN en las variables de entorno")
+        return
 
-    logger.info("🤖 Iniciando bot en Render...")
-    logger.info(f"📚 Total de asignaturas: {len(SUBJECTS)}")
-    
-    # Iniciar servidor Flask en segundo plano para health checks
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    logger.info("🌐 Servidor Flask iniciado para health checks (puerto 5000)")
-    
+    print("🤖 Iniciando bot en Render...")
+    print("🔄 Versión optimizada para Render")
+    print(f"📚 Total de asignaturas: {len(SUBJECTS)}")
+    print("📋 IDs de asignaturas disponibles:")
+    for subject_id in SUBJECTS.keys():
+        print(f"   - {subject_id}")
+
     # Crear el bot
     bot = ClassBot(BOT_TOKEN)
-    
+
+    # Ejecutar (modo polling para Render)
     try:
-        logger.info("✅ Bot iniciado correctamente")
-        
-        # Configurar manejo de señales para shutdown graceful
-        loop = asyncio.get_event_loop()
-        
-        # Ejecutar el bot con polling
-        await bot.application.run_polling()
-        
+        print("✅ Bot iniciado correctamente")
+        print("📖 Comando /bibliografia incluye: https://t.me/semholguincentro/40")
+        print("🔘 Ahora con botón de regreso al inicio en bibliografía")
+        print("💬 Nueva función: Conversación privada con usuarios del grupo")
+        bot.application.run_polling()
     except Exception as e:
-        logger.error(f"❌ Error en la ejecución del bot: {e}")
-        # Cerrar la aplicación correctamente
-        if bot.application.running:
-            await bot.application.stop()
-            await bot.application.shutdown()
-        raise
+        print(f"❌ Error: {e}")
 
-def signal_handler(signum, frame):
-    """Manejar señales de terminación"""
-    logger.info(f"📞 Señal {signum} recibida, cerrando aplicación...")
-    sys.exit(0)
-
+# 🚀 EJECUCIÓN PARA RENDER
 if __name__ == "__main__":
-    # Configurar manejo de señales
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Ejecutar la aplicación principal
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Bot detenido por el usuario")
-    except Exception as e:
-        logger.error(f"💥 Error fatal: {e}")
-        sys.exit(1)
+    main()
