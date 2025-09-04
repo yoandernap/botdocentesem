@@ -4,14 +4,18 @@ import logging
 import random
 import asyncio
 import os
+from datetime import datetime
 from flask import Flask
 import threading
+import signal
+import sys
 
 # Configurar logging para ver errores
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # Crear app Flask para health checks
 app = Flask(__name__)
@@ -145,7 +149,7 @@ class ClassBot:
 
     async def welcome_new_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """✅ Dar la bienvenida automática a nuevos miembros"""
-        print("🔔 Evento de nuevo miembro detectado!")
+        logger.info("🔔 Evento de nuevo miembro detectado!")
 
         if not update.message or not update.message.new_chat_members:
             return
@@ -154,7 +158,7 @@ class ClassBot:
             if new_member.is_bot:
                 continue
 
-            print(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
+            logger.info(f"🎓 Saludando nuevo estudiante: {new_member.first_name}")
 
             welcome_message = random.choice(WELCOME_MESSAGES).format(
                 name=new_member.first_name
@@ -174,10 +178,10 @@ class ClassBot:
 
             try:
                 await update.message.reply_text(full_welcome)
-                print(f"✅ Bienvenida enviada a {new_member.first_name}")
+                logger.info(f"✅ Bienvenida enviada a {new_member.first_name}")
                 
             except Exception as e:
-                print(f"❌ Error enviando bienvenida: {e}")
+                logger.error(f"❌ Error enviando bienvenida: {e}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mensaje de bienvenida"""
@@ -399,34 +403,59 @@ Funcionalidades:
 
 def run_flask():
     """Ejecutar servidor Flask para health checks"""
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 async def main():
     """Función principal para Render"""
     BOT_TOKEN = os.environ.get('BOT_TOKEN')
     if not BOT_TOKEN:
-        print("❌ Error: BOT_TOKEN no encontrado en variables de entorno")
-        exit(1)
+        logger.error("❌ Error: BOT_TOKEN no encontrado en variables de entorno")
+        sys.exit(1)
 
-    print("🤖 Iniciando bot en Render...")
-    print(f"📚 Total de asignaturas: {len(SUBJECTS)}")
+    logger.info("🤖 Iniciando bot en Render...")
+    logger.info(f"📚 Total de asignaturas: {len(SUBJECTS)}")
     
     # Iniciar servidor Flask en segundo plano para health checks
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print("🌐 Servidor Flask iniciado para health checks (puerto 5000)")
+    logger.info("🌐 Servidor Flask iniciado para health checks (puerto 5000)")
     
-    # Crear y ejecutar el bot
+    # Crear el bot
     bot = ClassBot(BOT_TOKEN)
     
     try:
-        print("✅ Bot iniciado correctamente")
+        logger.info("✅ Bot iniciado correctamente")
         
+        # Configurar manejo de señales para shutdown graceful
+        loop = asyncio.get_event_loop()
+        
+        # Ejecutar el bot con polling
         await bot.application.run_polling()
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        logger.error(f"❌ Error en la ejecución del bot: {e}")
+        # Cerrar la aplicación correctamente
+        if bot.application.running:
+            await bot.application.stop()
+            await bot.application.shutdown()
+        raise
 
-# 🚀 EJECUCIÓN PARA RENDER
+def signal_handler(signum, frame):
+    """Manejar señales de terminación"""
+    logger.info(f"📞 Señal {signum} recibida, cerrando aplicación...")
+    sys.exit(0)
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Configurar manejo de señales
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Ejecutar la aplicación principal
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("👋 Bot detenido por el usuario")
+    except Exception as e:
+        logger.error(f"💥 Error fatal: {e}")
+        sys.exit(1)
